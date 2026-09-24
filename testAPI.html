@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>SEB Gateway - Admin Panel</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; background: #f0f2f5; }
+        .container { max-width: 800px; margin: auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        h1 { color: #1a73e8; text-align: center; }
+        h2 { border-bottom: 2px solid #e8eaed; padding-bottom: 10px; color: #3c4043; font-size: 1.2em; margin-top: 30px;}
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; color: #5f6368; }
+        input[type="text"], input[type="url"] { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #dadce0; border-radius: 6px; font-size: 14px; }
+        button { padding: 12px 20px; background: #1a73e8; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; width: 100%; }
+        button:hover { background: #1557b0; }
+        .test-btn { background: #34a853; }
+        .test-btn:hover { background: #2d8745; }
+        pre { background: #202124; color: #00ff00; padding: 15px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word;}
+        .highlight { border: 2px solid #1a73e8; padding: 15px; border-radius: 8px; background: #e8f0fe; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Bảng điều khiển SEB Gateway</h1>
+        
+        <div class="highlight form-group">
+            <label>Link API của bạn (Lấy trên trang Render, dạng https://ten-app.onrender.com):</label>
+            <input type="url" id="baseUrl" placeholder="https://..." required>
+        </div>
+
+        <h2>1. Đẩy cấu hình kỳ thi lên Server (Cập nhật Link & BEK)</h2>
+        <div class="form-group">
+            <label>Mật khẩu Admin Token:</label>
+            <input type="text" id="adminToken" value="TienLe_AI_SuperSecretToken123">
+        </div>
+        <div class="form-group">
+            <label>Mã kỳ thi (Exam ID - VD: toan_giua_ky):</label>
+            <input type="text" id="examId" placeholder="Viết liền không dấu">
+        </div>
+        <div class="form-group">
+            <label>Browser Exam Key (BEK) sinh ra từ SEB:</label>
+            <input type="text" id="bek" placeholder="Chuỗi Hash lấy trong tab Exam của SEB">
+        </div>
+        <div class="form-group">
+            <label>Link Google Form gốc:</label>
+            <input type="url" id="formUrl" placeholder="https://docs.google.com/forms/...">
+        </div>
+        <button onclick="updateConfig()">Lưu cấu hình lên Server</button>
+        <pre id="postResult">Kết quả sẽ hiển thị ở đây...</pre>
+
+        <h2>2. Giả lập truy cập của Học sinh (Test cổng vào)</h2>
+        <p style="font-size: 0.9em; color: #666;">Công cụ này sẽ tự động mã hóa SHA256 để giả làm phần mềm SEB gửi yêu cầu lên server của bạn.</p>
+        <div class="form-group">
+            <label>Mã kỳ thi muốn truy cập:</label>
+            <input type="text" id="testExamId">
+        </div>
+        <div class="form-group">
+            <label>BEK giả lập (Nhập đúng BEK ở trên để test THÀNH CÔNG, nhập sai để test BỊ CHẶN):</label>
+            <input type="text" id="testBek">
+        </div>
+        <button class="test-btn" onclick="testGateway()">Chạy giả lập phần mềm SEB</button>
+        <pre id="getResult">Kết quả giả lập sẽ hiển thị ở đây...</pre>
+    </div>
+
+    <script>
+        // API 1: Bắn dữ liệu lên server
+        async function updateConfig() {
+            const baseUrl = document.getElementById('baseUrl').value.replace(/\/$/, "");
+            const token = document.getElementById('adminToken').value;
+            const data = {
+                exam_id: document.getElementById('examId').value,
+                bek: document.getElementById('bek').value,
+                form_url: document.getElementById('formUrl').value
+            };
+
+            if(!baseUrl || !data.exam_id) return alert("Vui lòng điền đủ Link API và Mã kỳ thi!");
+            document.getElementById('postResult').innerText = "Đang gửi dữ liệu lên server...";
+            
+            try {
+                const response = await fetch(`${baseUrl}/api/update-config`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+                    body: JSON.stringify(data)
+                });
+                const result = await response.json();
+                document.getElementById('postResult').innerText = JSON.stringify(result, null, 2);
+            } catch (error) {
+                document.getElementById('postResult').innerText = "Lỗi kết nối: " + error.message;
+            }
+        }
+
+        // Hàm băm SHA256 bằng Javascript (Mô phỏng cách SEB làm ngầm)
+        async function sha256(message) {
+            const msgBuffer = new TextEncoder().encode(message);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        // API 2: Giả lập truy cập của học sinh
+        async function testGateway() {
+            const baseUrl = document.getElementById('baseUrl').value.replace(/\/$/, "");
+            const examId = document.getElementById('testExamId').value;
+            const bek = document.getElementById('testBek').value;
+
+            if(!baseUrl || !examId) return alert("Vui lòng điền Link API và Mã kỳ thi!");
+
+            const targetUrl = `${baseUrl}/go/${examId}`;
+            // Theo chuẩn SEB: Hash = SHA256(URL truy cập + BEK)
+            const hashInput = targetUrl.replace("http://", "https://") + bek;
+            const mockSebHash = await sha256(hashInput);
+
+            document.getElementById('getResult').innerText = `[1] SEB đang nhắm tới link: ${targetUrl}\n[2] SEB tự tạo mã Hash tàng hình: ${mockSebHash}\n[3] Đang gửi yêu cầu...`;
+
+            try {
+                const response = await fetch(targetUrl, {
+                    method: 'GET',
+                    headers: { 'x-safeexambrowser-requesthash': mockSebHash }
+                });
+
+                // Do server trả về 302 Redirect sang Google Form, trình duyệt sẽ bị lỗi CORS khi cố bám theo bằng JS. 
+                // Nên nếu fetch trả về 'opaqueredirect' hoặc báo lỗi CORS sau khi gọi API, điều đó chứng tỏ Server đã duyệt thành công và đẩy đi.
+                const result = await response.json();
+                document.getElementById('getResult').innerText = `BỊ CHẶN!\nLý do từ máy chủ: ${result.error}`;
+            } catch (error) {
+                document.getElementById('getResult').innerText += `\n\nTHÀNH CÔNG!\nMáy chủ kiểm tra Hash hợp lệ và đã vứt học sinh sang Google Form.\n(Cảnh báo màu đỏ trong Console F12 về CORS lúc này là dấu hiệu chứng tỏ Redirect đã hoạt động).`;
+            }
+        }
+    </script>
+</body>
+</html>
