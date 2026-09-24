@@ -9,29 +9,27 @@ import os
 
 app = FastAPI()
 
-# --- CẤU HÌNH CORS (Khắc phục lỗi Failed to fetch khi dùng HTML test) ---
+# --- CẤU HÌNH CORS CHO RENDER ---
+# Đoạn này mở cổng để file admin.html dưới máy tính của bạn có thể gọi API lên Render
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Cho phép mọi nguồn (bao gồm file HTML local)
+    allow_origins=["*"], 
     allow_credentials=True,
-    allow_methods=["*"],  # Cho phép mọi phương thức (GET, POST...)
-    allow_headers=["*"],  # Cho phép mọi header (bao gồm x-admin-token)
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Mật khẩu quản trị và file lưu trữ
 ADMIN_TOKEN = "TienLe_AI_SuperSecretToken123"
 DB_FILE = "exam_data.json"
 
 # --- CÁC HÀM XỬ LÝ LƯU TRỮ ---
 def load_data():
-    """Đọc dữ liệu cấu hình kỳ thi từ file JSON"""
     if os.path.exists(DB_FILE):
         with open(DB_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
     return {}
 
 def save_data(data):
-    """Ghi đè dữ liệu mới vào file JSON"""
     with open(DB_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=4)
 
@@ -41,29 +39,23 @@ class ExamConfig(BaseModel):
     form_url: str
 
 # ---------------------------------------------------------
-# API 1: Dành cho Admin (Cập nhật Link Form VÀ mã Hash)
+# API 1: API Cập nhật cấu hình kỳ thi
 # ---------------------------------------------------------
 @app.post("/api/update-config")
 async def update_config(config: ExamConfig, x_admin_token: str = Header(None)):
     if x_admin_token != ADMIN_TOKEN:
-        raise HTTPException(status_code=401, detail="Sai mật khẩu Admin!")
+        raise HTTPException(status_code=401, detail="Sai mật khẩu Admin")
     
-    # Đọc dữ liệu cũ
     db = load_data()
-    
-    # Cập nhật hoặc tạo mới thông tin kỳ thi
     db[config.exam_id] = {
         "bek": config.bek,
         "form_url": config.form_url
     }
-    
-    # Lưu vật lý xuống ổ cứng
     save_data(db)
-    
-    return {"status": "success", "message": f"Đã lưu cấu hình kỳ thi '{config.exam_id}' vào {DB_FILE}"}
+    return {"status": "success", "message": f"Đã lưu thành công kỳ thi: {config.exam_id}"}
 
 # ---------------------------------------------------------
-# API 2: Dành cho SEB (Cổng vào của học sinh)
+# API 2: Cổng gác an ninh cho phần mềm SEB
 # ---------------------------------------------------------
 @app.get("/go/{exam_id}")
 async def seb_gateway(exam_id: str, request: Request):
@@ -76,25 +68,21 @@ async def seb_gateway(exam_id: str, request: Request):
     target_form_url = config["form_url"]
     expected_bek = config["bek"]
 
-    # Xử lý URL: Render dùng proxy nên nhận http, nhưng SEB tính hash bằng https.
-    # Cấu trúc if này giúp bạn test local (cổng 5000) không bị sai hash, lên mây vẫn chuẩn.
-    current_url = str(request.url)
-    if "localhost" not in current_url and "127.0.0.1" not in current_url:
-        current_url = current_url.replace("http://", "https://")
-        
+    # Đảm bảo URL luôn là https để khớp với cách SEB tạo mã Hash
+    current_url = str(request.url).replace("http://", "https://")
     seb_hash = request.headers.get("x-safeexambrowser-requesthash")
     
     if not seb_hash:
-        return {"error": "Truy cập bị từ chối. Vui lòng mở bằng file cấu hình SEB chuẩn."}
+        return {"error": "Truy cập bị từ chối. Vui lòng mở bằng file cấu hình SEB đã được cung cấp."}
         
-    # Tính toán Hash: SHA256(URL hiện tại + BEK)
+    # Tính toán Hash mong đợi: SHA256(URL + BEK)
     hash_input = current_url + expected_bek
     expected_hash = hashlib.sha256(hash_input.encode('utf-8')).hexdigest()
     
-    # So sánh mã Hash an toàn (tránh Timing Attack)
+    # So sánh Hash
     if secrets.compare_digest(seb_hash.lower(), expected_hash.lower()):
-        # Nếu khớp, bẻ lái sang Google Form
+        # Hợp lệ: Bẻ lái sang Google Form
         return RedirectResponse(url=target_form_url, status_code=302)
     else:
-        # Nếu sai (Mã nguồn bị sửa, config bị đổi)
-        return {"error": "Phát hiện phần mềm bị chỉnh sửa! Mã kiểm tra không khớp."}
+        # Không hợp lệ (mã nguồn bị sửa): Báo lỗi
+        return {"error": "Phát hiện phần mềm bị chỉnh sửa. Không thể truy cập đề thi!"}
